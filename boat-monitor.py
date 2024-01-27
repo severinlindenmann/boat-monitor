@@ -14,8 +14,7 @@ if __name__ == "__main__":
         }
     )
 
-    st.title("👋 Welcome to Analytics Severin")
-    st.text("In the sidebar you can find the different pages.")
+    st.title("⛵ Easy | Boat Monitor")
 
 def boat_data():   
     query="""
