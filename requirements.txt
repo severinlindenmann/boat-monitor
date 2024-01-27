@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+db_dtypes
+python-dotenv
+google-cloud-bigquery
+PyYAML
+calmap
