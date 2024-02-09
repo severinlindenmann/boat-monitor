@@ -4,6 +4,7 @@ import ttn
 import datetime
 import pandas as pd
 from datetime import timedelta
+import matplotlib.pyplot as plt
 
 if __name__ == "__main__":
     st.set_page_config(
@@ -41,7 +42,6 @@ def boat_data():
 SELECT * 
 FROM `seli-data-storage.data_storage_1.lora_iot` 
 ORDER BY received_at DESC
-LIMIT 20
 """
     df = bq.query_bigquery_return_df(query, origin='mobility')
 
@@ -112,11 +112,23 @@ df = boat_data()
 # Set the 'received_at' column as the DataFrame index
 df.set_index('received_at', inplace=True)
 
-# Create a Streamlit app
-st.title('Temperature and Humidity Chart')
+st.title('Temperature Chart')
 
-# Create an area chart using Streamlit to display temperature and humidity data
-st.area_chart(df[['temperature']])
+# Create a custom plot with resized y-axis
+fig, ax = plt.subplots()
+ax.plot(df.index, df['temperature'])
+
+# Set the y-axis limit to customize the range
+y_min = min(df['temperature']) - 0.1
+y_max = max(df['temperature']) + 0.1
+ax.set_ylim(y_min, y_max)
+
+# Set labels
+ax.set_xlabel('Date')
+ax.set_ylabel('Temperature')
+
+# Display the plot in Streamlit
+st.pyplot(fig)
 
 st.write("Time is in UTC")
 st.dataframe(df, use_container_width=True)
