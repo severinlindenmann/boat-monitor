@@ -4,9 +4,6 @@ import json
 import os
 import pandas as pd
 
-from dotenv import load_dotenv
-load_dotenv()
-
 TTN_KEY = os.getenv('TTN_KEY')
 
 @st.cache_resource
