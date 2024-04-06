@@ -6,7 +6,7 @@ import pandas as pd
 
 TTN_KEY = os.getenv('TTN_KEY')
 
-@st.cache_resource
+# @st.cache_resource
 def retrieve_stored_uplinks(api_key, application_id, timestamp):
     url = f"https://eu1.cloud.thethings.network/api/v3/as/applications/{application_id}/packages/storage/uplink_message"
     headers = {
