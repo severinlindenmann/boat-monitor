@@ -17,4 +17,4 @@ EXPOSE 8080
 
 HEALTHCHECK CMD curl --fail http://localhost:8080/_stcore/health
 
-ENTRYPOINT ["streamlit", "run", "streamlit.py", "--server.port=8080", "--server.headless=true", "--browser.gatherUsageStats=false"]
+ENTRYPOINT ["streamlit", "run", "streamlit.py", "--server.port=8080", "--server.headless=true", "--browser.gatherUsageStats=false", "--ui.hideTopBar=true"]

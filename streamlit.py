@@ -1,27 +1,57 @@
 import streamlit as st
-import bigquery as bq
 import ttn
-import datetime
+import json
 import pandas as pd
 from datetime import timedelta
 import os
+from dotenv import load_dotenv
+from google.cloud import bigquery
+import pydeck as pdk
 
-if __name__ == "__main__":
-    st.set_page_config(
-        page_title="Boat Monitor | by Severin",
-        page_icon="👋",
-        layout="wide",
-        initial_sidebar_state="expanded",
-        menu_items={
-            "Get Help": "https://severin.io",
-            "Report a bug": "https://severin.io",
-            "About": "Boat Dashboard, Created by Severin Lindenmann",
-        },
-    )
+load_dotenv()
 
-    st.title("⛵ Easy | Boat Monitor")
+
+st.set_page_config(
+    page_title="Easy Tracker | by Severin",
+    page_icon="👋",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        "Get Help": "https://severin.io",
+        "Report a bug": "https://severin.io",
+        "About": "Boat Dashboard, Created by Severin Lindenmann",
+    },
+)
+
+st.title("⛵ Easy | Boat Monitor")
 
 AUTH_KEY = os.getenv("AUTH_KEY")
+TTN_KEY = os.getenv("TTN_KEY")
+PROJECT = os.getenv("PROJECT")
+CLOUD = os.getenv("CLOUD")
+
+
+@st.cache_resource
+def create_bigquery_connection(PROJECT):
+    if CLOUD == "TRUE":
+        return bigquery.Client(PROJECT)
+    else:
+        from google.oauth2 import service_account
+
+        GOOGLE_KEY_JSON = os.getenv("GOOGLE_KEY_JSON")
+        GOOGLE_KEY_JSON = json.loads(GOOGLE_KEY_JSON)
+
+        credentials = service_account.Credentials.from_service_account_info(
+            GOOGLE_KEY_JSON
+        )
+        return bigquery.Client(credentials=credentials, project=PROJECT)
+
+
+@st.cache_data
+def query_bigquery_return_df(query, PROJECT):
+    query_job = create_bigquery_connection(PROJECT).query(query)
+    results = query_job.result()
+    return results.to_dataframe()
 
 
 # Function to check the key validity
@@ -65,107 +95,100 @@ def handle_authentication():
     return False  # Return False if authentication failed or hasn't been attempted
 
 
+def history_data():
+    query = """
+SELECT * FROM `seli-data-storage.data_storage_1.lora_iot` 
+WHERE TIMESTAMP_TRUNC(received_at, DAY) > TIMESTAMP("2024-04-05")
+ORDER BY received_at DESC
+    """
+    df = query_bigquery_return_df(query, PROJECT)
+
+    return df
+
+
+def utc_to_cest_readable(utc_time):
+    cest_time = utc_time + timedelta(hours=2)
+    return cest_time.strftime("%d.%m.%Y %H:%M Uhr CEST")
+
+
+def utc_to_cest(df):
+    df["received_at"] = pd.to_datetime(df["received_at"])
+    df["received_at"] = df["received_at"] + timedelta(hours=2)
+    return df
+
+
+def plot_current_location(df):
+    # find the last entry with valid latitude and longitude
+    df = df[(df["latitude"] != 0) & (df["longitude"] != 0)]
+    df = df.head(1)
+    if df.empty:
+        st.warning("Keine gültigen GPS-Koordinaten in der letzten Stunde gefunden.")
+    else:
+        st.map(df)
+
+
+def show_current_measurements(df):
+    st.subheader("Aktuelle Messwerte")
+    col1, col2 = st.columns((1, 1))
+
+    with col1:
+        st.metric("Feuchtigkeit", f"{df['humidity'].iloc[0]} %", delta=None)
+
+    with col2:
+        st.metric("Temperatur", f"{df['temperature'].iloc[0]} °C", delta=None)
+
+    # with col3:
+    #         st.metric("Battery Voltage", f"{df['batteryVoltage'].iloc[0]} V", delta=None)
+
+
+def run_app():
+    current_data = ttn.get_ttn_data(TTN_KEY)
+    current_data["received_at"] = pd.to_datetime(current_data["received_at"])
+    current_data = current_data.sort_values(by="received_at", ascending=False)
+
+    st.info(
+        f"Die Daten wurden zuletzt aktualisiert: {utc_to_cest_readable(current_data['received_at'].iloc[0])}"
+    )
+
+    st.subheader("Aktueller Standort")
+    plot_current_location(current_data)
+    show_current_measurements(current_data)
+
+    st.title("Historische Daten")
+
+    historical_data = history_data()
+    historical_data = utc_to_cest(historical_data)
+
+    st.write("#### Standort")
+    # Define the map layer for the boat's movement
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        historical_data,
+        get_position=["longitude", "latitude"],
+        auto_highlight=True,
+        get_radius=100,  # Radius of each data point
+        get_fill_color=[180, 0, 200, 140],  # Color of the data points
+        pickable=True,
+    )
+
+    # Define the view state for the map
+    view_state = pdk.ViewState(
+        latitude=historical_data["latitude"].mean(),
+        longitude=historical_data["longitude"].mean(),
+        zoom=14,
+        pitch=0,
+    )
+
+    # Render the map with pydeck
+    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state))
+
+    st.write("#### Temperatur und Feuchtigkeit")
+    st.line_chart(historical_data[["temperature", "humidity"]])
+
+
 # Main app flow
 if handle_authentication():
-
-    def get_current_timestamp_minus_one_hour():
-        # Get the current UTC time
-        current_time = datetime.datetime.utcnow()
-
-        # Subtract 1 hour from the current time
-        one_hour_ago = current_time - datetime.timedelta(hours=1)
-
-        # Format the result as a string in the desired format
-        timestamp = one_hour_ago.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        return timestamp
-
-    def get_lora_data():
-        df = ttn.get_ttn_data(get_current_timestamp_minus_one_hour())
-        return df
-
-    def boat_data():
-        query = """
-    SELECT * 
-    FROM `seli-data-storage.data_storage_1.lora_iot` 
-    ORDER BY received_at DESC
-    """
-        df = bq.query_bigquery_return_df(query, origin="mobility")
-
-        return df
-
-    df = get_lora_data()
-
-    st.title("Live Data")
-    st.dataframe(df, use_container_width=True)
-
-    df["received_at"] = pd.to_datetime(df["received_at"])
-    df = df.sort_values(by="received_at", ascending=False)
-
-    # Sort the DataFrame by 'received_at' in descending order to get the latest entry
-    latest_entry = df.iloc[0]
-
-    # Function to display the last entry and last update time
-    def display_last_entry():
-        # Create two columns for a more organized layout
-        col1, col2, col3, col4 = st.columns(4)
-
-        # Display the metrics in the first column
-        with col1:
-            st.metric(
-                "Battery Voltage", f"{latest_entry['batteryVoltage']} V", delta=None
-            )
-
-        # Display the metrics in the second column
-        with col2:
-            st.metric("Humidity", f"{latest_entry['humidity']} %", delta=None)
-
-        with col3:
-            st.metric("Temperature", f"{latest_entry['temperature']} °C", delta=None)
-
-        with col4:
-            st.metric("Switch Status", latest_entry["reedSwitchStatus"])
-
-        new_date_obj = latest_entry["received_at"] + timedelta(hours=1)
-        formatted_date = new_date_obj.strftime("%d.%m.%Y %H:%M Uhr CEST")
-        update_info = f"Last Data Update: {formatted_date}"
-        st.info(update_info)
-
-    # Check if either latitude or longitude is 0 and extract the last entry where both are not 0
-    try:
-        last_successful_entry = df[(df["latitude"] != 0) & (df["longitude"] != 0)].iloc[
-            0
-        ]
-
-        # Extract the date from the last successful entry
-        latest_gps_coordinates = {
-            "latitude": last_successful_entry["latitude"],
-            "longitude": last_successful_entry["longitude"],
-        }
-
-        last_successful_date = last_successful_entry["received_at"]
-
-        st.title("Real-Time Data")
-        st.map(pd.DataFrame([latest_gps_coordinates]))
-        # Display the last successful update tim
-        new_date_obj = last_successful_date + timedelta(hours=1)
-        formatted_date = new_date_obj.strftime("%d.%m.%Y %H:%M Uhr CEST")
-        # formatted_date = last_successful_date.strftime("%d.%m.%Y %H:%M Uhr CEST")
-        st.info(f"Last Successful Location Update: {formatted_date}")
-        display_last_entry()
-
-        with st.expander("Show Raw Data"):
-            st.write("Time is in UTC")
-            st.dataframe(df, use_container_width=True)
-    except IndexError:
-        st.warning("No successful GPS coordinates found in the last hour.")
-        display_last_entry()
-
-    st.title("Historical Data")
-    df = boat_data()
-
-    st.write("Time is in UTC")
-    st.dataframe(df, use_container_width=True)
+    run_app()
 
 else:
     st.stop()  # Stop the app if authentication fails or hasn't been attempted
