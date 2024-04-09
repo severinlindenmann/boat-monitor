@@ -6,9 +6,9 @@ from datetime import timedelta
 import os
 from dotenv import load_dotenv
 from google.cloud import bigquery
-import pydeck as pdk
 from streamlit_folium import st_folium
 import folium
+from folium.plugins import HeatMap
 
 load_dotenv()
 
@@ -147,6 +147,39 @@ def plot_current_location(df):
         st_folium(m, use_container_width=True)
 
 
+def plot_history_location(df):
+    # Find the last entry with valid latitude and longitude
+    df = df[(df["latitude"] != 0) & (df["longitude"] != 0)]
+
+    #center the map on all the data points
+    lat = df['latitude'].mean()
+    lon = df['longitude'].mean()
+
+    m = folium.Map(location=[lat, lon], zoom_start=15)
+
+    # Prepare data for the heatmap (list of lat, lon pairs)
+    heat_data = [[row['latitude'], row['longitude']] for index, row in df.iterrows()]
+
+    # Add a heatmap layer
+    HeatMap(heat_data).add_to(m)
+
+    # Add markers for the last location(s)
+    # Assuming 'received_at' is sorted or the last row(s) represent the last locations
+    last_rows = df.head(1)  # Adjust this if you expect multiple "last" locations
+    for index, row in last_rows.iterrows():
+        lat = row['latitude']
+        lon = row['longitude']
+        last_refreshed = row['received_at'].strftime("%Y-%m-%d %H:%M:%S")
+
+        folium.Marker(
+            location=[lat, lon],
+            popup=folium.Popup(f"Latitude: {lat}, Longitude: {lon}<br>Last Refreshed: {last_refreshed}", max_width=300),
+            icon=folium.Icon(color='red', icon='info-sign')  # Markers in red to distinguish them
+        ).add_to(m)
+        
+        # Display the map using Streamlit
+    st_folium(m, use_container_width=True)
+
 def show_current_measurements(df):
     st.subheader("Aktuelle Messwerte")
     col1, col2 = st.columns((1, 1))
@@ -182,27 +215,8 @@ def run_app():
     historical_data = utc_to_cest(historical_data)
 
     st.write("#### Standort")
-    # Define the map layer for the boat's movement
-    layer = pdk.Layer(
-        "ScatterplotLayer",
-        historical_data,
-        get_position=["longitude", "latitude"],
-        auto_highlight=True,
-        get_radius=100,  # Radius of each data point
-        get_fill_color=[180, 0, 200, 140],  # Color of the data points
-        pickable=True,
-    )
 
-    # Define the view state for the map
-    view_state = pdk.ViewState(
-        latitude=historical_data["latitude"].mean(),
-        longitude=historical_data["longitude"].mean(),
-        zoom=14,
-        pitch=0,
-    )
-
-    # Render the map with pydeck
-    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state))
+    plot_history_location(historical_data)
 
     st.write("#### Temperatur und Feuchtigkeit")
     st.line_chart(historical_data[["temperature", "humidity"]])
