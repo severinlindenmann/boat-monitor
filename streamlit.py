@@ -211,6 +211,7 @@ def run_app():
     show_current_measurements(current_data)
 
     st.title("Historische Daten")
+    st.info("Diese Daten werden nur stündlich aktualisiert und sind daher nicht in Echtzeit.")
 
     historical_data = history_data()
     historical_data = utc_to_cest(historical_data)
