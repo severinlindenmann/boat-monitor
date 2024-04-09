@@ -144,7 +144,7 @@ def plot_current_location(df):
         ).add_to(m)
         
         # Display the map using Streamlit
-        st_folium(m, use_container_width=True)
+        st_folium(m, use_container_width=True, height=400)
 
 
 def plot_history_location(df):
@@ -178,7 +178,7 @@ def plot_history_location(df):
         ).add_to(m)
         
         # Display the map using Streamlit
-    st_folium(m, use_container_width=True)
+    st_folium(m, use_container_width=True, height=400)
 
 def show_current_measurements(df):
     st.subheader("Aktuelle Messwerte")
