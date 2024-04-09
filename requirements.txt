@@ -8,3 +8,5 @@ db-dtypes==1.2.0
 python-dotenv==1.0.1
 streamlit==1.32.2
 streamlit-folium==0.18.0
+openmeteo-requests==1.2.0
+plotly==5.20.0

@@ -2,16 +2,17 @@ import streamlit as st
 import ttn
 import json
 import pandas as pd
-from datetime import timedelta
+from datetime import timedelta, datetime
 import os
 from dotenv import load_dotenv
 from google.cloud import bigquery
 from streamlit_folium import st_folium
 import folium
 from folium.plugins import HeatMap
+import openmeteo_requests
+import plotly.graph_objects as go
 
 load_dotenv()
-
 
 st.set_page_config(
     page_title="Easy Tracker | by Severin",
@@ -97,10 +98,11 @@ def handle_authentication():
     return False  # Return False if authentication failed or hasn't been attempted
 
 
-def history_data():
-    query = """
+def history_data(today, before):
+    query = f"""
 SELECT * FROM `seli-data-storage.data_storage_1.lora_iot` 
-WHERE TIMESTAMP_TRUNC(received_at, DAY) > TIMESTAMP("2024-04-05")
+WHERE TIMESTAMP_TRUNC(received_at, DAY) BETWEEN TIMESTAMP("{before}") AND TIMESTAMP("{today}")
+AND TIMESTAMP_TRUNC(received_at, DAY) > TIMESTAMP("2024-04-05")
 ORDER BY received_at DESC
     """
     df = query_bigquery_return_df(query, PROJECT)
@@ -118,6 +120,49 @@ def utc_to_cest(df):
     df["received_at"] = df["received_at"] + timedelta(hours=2)
     return df
 
+@st.cache_resource
+def get_openmeteo_client():
+    return openmeteo_requests.Client()
+
+@st.cache_data
+def fetch_weather_data(past_days):
+    # Initialize the Open-Meteo API client
+    openmeteo = get_openmeteo_client()
+
+    # Define the API request parameters
+    params = {
+        "latitude": 47.5659,
+        "longitude": 9.3787,
+        "hourly": ["temperature_2m", "relative_humidity_2m", "wind_speed_10m", "wind_direction_10m"],
+        "timezone": "Europe/Berlin",
+        "past_days": past_days,
+        "forecast_days": 0,
+    }
+    
+    # Fetch weather data from the Open-Meteo API
+    responses = openmeteo.weather_api("https://api.open-meteo.com/v1/forecast", params=params)
+
+    # Process the first response
+    response = responses[0]
+
+    # Process hourly data
+    hourly = response.Hourly()
+    hourly_data = {
+        "date": pd.date_range(
+            start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
+            end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
+            freq=pd.Timedelta(seconds=hourly.Interval()),
+            inclusive="left"
+        ),
+        "temperature_2m": hourly.Variables(0).ValuesAsNumpy(),
+        "relative_humidity_2m": hourly.Variables(1).ValuesAsNumpy(),
+        "wind_speed_10m": hourly.Variables(2).ValuesAsNumpy(),
+        "wind_direction_10m": hourly.Variables(3).ValuesAsNumpy(),
+    }
+
+    # Create and return the DataFrame
+    hourly_dataframe = pd.DataFrame(data=hourly_data)
+    return hourly_dataframe
 
 def plot_current_location(df):
     # Find the last entry with valid latitude and longitude
@@ -144,13 +189,10 @@ def plot_current_location(df):
         ).add_to(m)
         
         # Display the map using Streamlit
-        st_folium(m, use_container_width=True, height=400)
+        st_folium(m, use_container_width=True, height=400, returned_objects=[])
 
 
 def plot_history_location(df):
-    # Find the last entry with valid latitude and longitude
-    df = df[(df["latitude"] != 0) & (df["longitude"] != 0)]
-
     #center the map on all the data points
     lat = df['latitude'].mean()
     lon = df['longitude'].mean()
@@ -165,11 +207,11 @@ def plot_history_location(df):
 
     # Add markers for the last location(s)
     # Assuming 'received_at' is sorted or the last row(s) represent the last locations
-    last_rows = df.head(1)  # Adjust this if you expect multiple "last" locations
+    last_rows = df.tail(1)  # Adjust this if you expect multiple "last" locations
     for index, row in last_rows.iterrows():
         lat = row['latitude']
         lon = row['longitude']
-        last_refreshed = row['received_at'].strftime("%Y-%m-%d %H:%M:%S")
+        last_refreshed = index.strftime("%Y-%m-%d %H:%M:%S")
 
         folium.Marker(
             location=[lat, lon],
@@ -178,7 +220,7 @@ def plot_history_location(df):
         ).add_to(m)
         
         # Display the map using Streamlit
-    st_folium(m, use_container_width=True, height=400)
+    st_folium(m, use_container_width=True, height=400,  returned_objects=[])
 
 def show_current_measurements(df):
     st.subheader("Aktuelle Messwerte")
@@ -194,6 +236,97 @@ def show_current_measurements(df):
     # with col3:
     #         st.metric("Battery Voltage", f"{df['batteryVoltage'].iloc[0]} V", delta=None)
 
+
+def transform_history(bigquery_df, weather_df):
+    # remove rows with missing latitude and longitude from the bigquery data
+    bigquery_df = bigquery_df[(bigquery_df["latitude"] != 0) & (bigquery_df["longitude"] != 0)]
+
+    # aggregate the bigquery data to hourly averages
+    bigquery_df = bigquery_df.resample("H", on="received_at").mean(numeric_only=True)
+
+    # merge the bigquery data with the weather data
+    df = pd.merge_asof(
+        bigquery_df,
+        weather_df,
+        left_index=True,
+        right_on="date",
+        direction="nearest",
+    )
+
+    df = df.rename(columns={"temperature_2m": "Temperatur Romanshorn", "relative_humidity_2m": "Feuchtigkeit Romanshorn", "wind_speed_10m": "Windgeschwindigkeit Romanshorn", "wind_direction_10m": "Windrichtung Romanshorn",
+                            "temperature": "Temperatur Boot", "humidity": "Feuchtigkeit Boot"})
+
+    return df
+
+def plot_history_weather_temp(df):
+    # Create traces for each measurement
+    trace1 = go.Scatter(x=df.index, y=df['Temperatur Romanshorn'], mode='lines+markers', name='Temperatur Romanshorn')
+    trace3 = go.Scatter(x=df.index, y=df['Temperatur Boot'], mode='lines+markers', name='Temperatur Boot')
+    
+    # Combine traces into a list
+    data = [trace1, trace3]
+    
+    # Define layout options
+    layout = go.Layout(
+        # title='Messungen über die Zeit',
+        # xaxis=dict(
+        #     title='Zeit (received_at)',
+        #     tickformat='%d.%m',  # Day.Month format
+        #     dtick="D1",  # One tick per day
+        #     tickangle=-45,  # Rotate tick labels for better legibility
+        # ),
+        yaxis_title='Temperatur (°C)',
+        margin=dict(l=20, r=20, t=40, b=60),  # Adjust bottom margin to accommodate rotated labels
+        hovermode='closest',
+        legend=dict(
+            x=0.5,
+            y=-0.3,  # Adjust for legend positioning
+            xanchor='center',
+            yanchor='top',
+            orientation='h'
+        )
+    )
+    
+    # Create the figure with data and layout
+    fig = go.Figure(data=data, layout=layout)
+    
+    # Displaying the plot in Streamlit
+    st.plotly_chart(fig, use_container_width=True)
+
+def plot_history_weather_hum(df):
+    # Create traces for each measurement
+    trace2 = go.Scatter(x=df.index, y=df['Feuchtigkeit Romanshorn'], mode='lines+markers', name='Feuchtigkeit Romanshorn')
+    trace4 = go.Scatter(x=df.index, y=df['Feuchtigkeit Boot'], mode='lines+markers', name='Feuchtigkeit Boot')
+    
+    # Combine traces into a list
+    data = [trace2, trace4]
+    
+    # Define layout options
+    layout = go.Layout(
+        # title='Messungen über die Zeit',
+        # xaxis=dict(
+        #     # title='Zeit (received_at)',
+        #     tickformat='%d.%m',  # Day.Month format
+        #     dtick="D1",  # One tick per day
+        #     tickangle=-45,  # Rotate tick labels for better legibility
+        # ),
+        yaxis_title='Feuchtigkeit (%)',
+        margin=dict(l=20, r=20, t=40, b=60),  # Adjust bottom margin to accommodate rotated labels
+        hovermode='closest',
+        legend=dict(
+            x=0.5,
+            y=-0.3,  # Adjust for legend positioning
+            xanchor='center',
+            yanchor='top',
+            orientation='h'
+        )
+    )
+    
+    # Create the figure with data and layout
+    fig = go.Figure(data=data, layout=layout)
+    
+    # Displaying the plot in Streamlit
+    st.plotly_chart(fig, use_container_width=True)
 
 def run_app():
     current_data = ttn.get_ttn_data(TTN_KEY)
@@ -213,16 +346,39 @@ def run_app():
     st.title("Historische Daten")
     st.info("Diese Daten werden nur stündlich aktualisiert und sind daher nicht in Echtzeit.")
 
-    historical_data = history_data()
-    historical_data = utc_to_cest(historical_data)
+    select_time_range = st.selectbox(
+        "Zeitraum auswählen",
+        ["Letzte 7 Tage", "Letzte 30 Tage", "Letzte 3 Monate"],
+    )
 
-    st.write("#### Standort")
+    if select_time_range == "Letzte 7 Tage":
+        days = 7
+        today = datetime.now().strftime('%Y-%m-%d')
+        before = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    elif select_time_range == "Letzte 30 Tage":
+        days = 30
+        today = datetime.now().strftime('%Y-%m-%d')
+        before = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    elif select_time_range == "Letzte 3 Monate":
+        days = 90
+        today = datetime.now().strftime('%Y-%m-%d')
+        before = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d') 
 
-    plot_history_location(historical_data)
+    load_history= st.button("Klicken um Historische Daten zu laden", use_container_width=True)
+    if load_history:
+        historical_data = history_data(today, before)
+        historical_data = utc_to_cest(historical_data)
 
-    st.write("#### Temperatur und Feuchtigkeit")
-    st.line_chart(historical_data[["temperature", "humidity"]])
+        df = transform_history(historical_data, fetch_weather_data(past_days=days))
 
+        st.write("#### Standort")
+        plot_history_location(df)
+        
+        st.write("#### Temperatur")
+        plot_history_weather_temp(df)
+
+        st.write("#### Feuchtigkeit")
+        plot_history_weather_hum(df)
 
 # Main app flow
 if handle_authentication():
