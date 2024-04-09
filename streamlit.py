@@ -182,6 +182,7 @@ def plot_history_location(df):
 
 def show_current_measurements(df):
     st.subheader("Aktuelle Messwerte")
+    st.info("Die Messwerte könnten sehr ungenau oder falsch sein - muss noch genauer geprüft werden.")
     col1, col2 = st.columns((1, 1))
 
     with col1:
@@ -205,7 +206,7 @@ def run_app():
 
     current_data = utc_to_cest(current_data)
 
-    st.subheader("Aktueller Standort")
+    st.subheader("Aktueller Standort des Bootes")
     plot_current_location(current_data)
     show_current_measurements(current_data)
 
