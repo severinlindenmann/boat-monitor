@@ -11,6 +11,7 @@ import folium
 from folium.plugins import HeatMap
 import openmeteo_requests
 import plotly.graph_objects as go
+from geopy.distance import geodesic
 
 load_dotenv()
 
@@ -100,9 +101,8 @@ def handle_authentication():
 
 def history_data(today, before):
     query = f"""
-SELECT * FROM `seli-data-storage.data_storage_1.lora_iot` 
+SELECT * FROM `seli-data-storage.data_storage_1.sailing_boat` 
 WHERE TIMESTAMP_TRUNC(received_at, DAY) BETWEEN TIMESTAMP("{before}") AND TIMESTAMP("{today}")
-AND TIMESTAMP_TRUNC(received_at, DAY) > TIMESTAMP("2024-04-05")
 ORDER BY received_at DESC
     """
     df = query_bigquery_return_df(query, PROJECT)
@@ -209,34 +209,48 @@ def plot_current_location(df, show_data_transfer=False):
             ),  # Adjusted to 'anchor' as 'ship' might not be supported
         ).add_to(m)
 
-        if show_data_transfer:
-            # Check the count of gateways and mark their locations
-            count_gw = last_entry["count_gw"].iloc[0]
-            for i in range(1, count_gw + 1):
-                lat_gw = last_entry[f"latitude_gw_{i}"].iloc[0]
-                lon_gw = last_entry[f"longitude_gw_{i}"].iloc[0]
-                snr_gw = last_entry[f"snr_gw_{i}"].iloc[0]
-                rssi_gw = last_entry[f"rssi_gw_{i}"].iloc[0]
-                name_gw = last_entry[f"id_gw_{i}"].iloc[0]
+    if show_data_transfer:
+        # Check the count of gateways and mark their locations
+        count_gw = last_entry["count_gw"].iloc[0]
+        for i in range(1, count_gw + 1):
+            lat_gw = last_entry[f"latitude_gw_{i}"].iloc[0]
+            lon_gw = last_entry[f"longitude_gw_{i}"].iloc[0]
+            snr_gw = last_entry[f"snr_gw_{i}"].iloc[0]
+            rssi_gw = last_entry[f"rssi_gw_{i}"].iloc[0]
+            name_gw = last_entry[f"id_gw_{i}"].iloc[0]
 
-                # Determine line width based on SNR, mapping the range from 0 to -20 to a width in pixels
-                line_width = max(1, 1 + (snr_gw / -4))  # Example linear mapping
+            # Determine line width based on SNR, mapping the range from -10 to -20 to a width in pixels
+            line_width = 2 + ((-10 - snr_gw) * (5 - 1) / (10))
 
-                if pd.notnull(lat_gw) and pd.notnull(
-                    lon_gw
-                ):  # Ensure gateway has valid coordinates
-                    folium.Marker(
-                        location=[lat_gw, lon_gw],
-                        popup=f"Gateway {name_gw}<br>Latitude: {lat_gw}, Longitude: {lon_gw}<br>SNR: {snr_gw} dB | RSSI: {rssi_gw} dBm",
-                        icon=folium.Icon(color="green", icon="cloud"),
-                    ).add_to(m)
+            if pd.notnull(lat_gw) and pd.notnull(lon_gw):  # Ensure gateway has valid coordinates
+                folium.Marker(
+                    location=[lat_gw, lon_gw],
+                    popup=f"Gateway {name_gw}<br>Latitude: {lat_gw}, Longitude: {lon_gw}<br>SNR: {snr_gw} dB | RSSI: {rssi_gw} dBm",
+                    icon=folium.Icon(color="green", icon="cloud"),
+                ).add_to(m)
 
-                    # Draw line between device location and gateway
-                    folium.PolyLine(
-                        locations=[(lat, lon), (lat_gw, lon_gw)],
-                        color="red",
-                        weight=line_width,
-                    ).add_to(m)
+                # Calculate distance in meters
+                distance_m = geodesic((lat, lon), (lat_gw, lon_gw)).meters
+
+                # Draw line between device location and gateway
+                line = folium.PolyLine(
+                    locations=[(lat, lon), (lat_gw, lon_gw)],
+                    color="red",
+                    weight=line_width,
+                ).add_to(m)
+
+                # Add distance text to the line
+                middle_point = [
+                    (lat + lat_gw) / 2,
+                    (lon + lon_gw) / 2
+                ]
+                folium.map.Marker(
+                    middle_point,
+                    icon=folium.DivIcon(
+                        html=f'<div style="font-size: 9pt; font-weight: bold; color: white; background-color: black; height: 40px; width: 40px; border-radius: 20px; opacity: 0.75; display: flex; justify-content: center; align-items: center;">{int(distance_m)}m</div>'
+
+                    )
+                ).add_to(m)
 
         # Display the map using Streamlit
         st_folium(m, use_container_width=True, height=400)
