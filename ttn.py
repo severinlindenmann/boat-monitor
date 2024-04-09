@@ -47,31 +47,29 @@ def get_ttn_data(TTN_KEY, timestamp=get_current_timestamp_minus_one_hour()):
     # Extract data from the JSON and create a list of dictionaries
     extracted_data = []
     for entry in dict_list:
+        # Start by extracting the common data that doesn't depend on the number of gateways
         extracted_entry = {
             "received_at": entry["result"]["received_at"],
-            "batteryVoltage": entry["result"]["uplink_message"]["decoded_payload"][
-                "batteryVoltage"
-            ],
-            "humidity": entry["result"]["uplink_message"]["decoded_payload"][
-                "humidity"
-            ],
-            "latitude": entry["result"]["uplink_message"]["decoded_payload"][
-                "latitude"
-            ],
-            "longitude": entry["result"]["uplink_message"]["decoded_payload"][
-                "longitude"
-            ],
-            "reedSwitchStatus": entry["result"]["uplink_message"]["decoded_payload"][
-                "reedSwitchStatus"
-            ],
-            "satellites": entry["result"]["uplink_message"]["decoded_payload"][
-                "satellites"
-            ],
-            "temperature": entry["result"]["uplink_message"]["decoded_payload"][
-                "temperature"
-            ],
+            "batteryVoltage": entry["result"]["uplink_message"]["decoded_payload"]["batteryVoltage"],
+            "humidity": entry["result"]["uplink_message"]["decoded_payload"]["humidity"],
+            "latitude": entry["result"]["uplink_message"]["decoded_payload"]["latitude"],
+            "longitude": entry["result"]["uplink_message"]["decoded_payload"]["longitude"],
+            "reedSwitchStatus": entry["result"]["uplink_message"]["decoded_payload"]["reedSwitchStatus"],
+            "satellites": entry["result"]["uplink_message"]["decoded_payload"]["satellites"],
+            "temperature": entry["result"]["uplink_message"]["decoded_payload"]["temperature"],
+            'count_gw': len(entry["result"]["uplink_message"]["rx_metadata"])
         }
-        extracted_data.append(extracted_entry)
 
+        # Now iterate through each gateway in the rx_metadata to add the dynamic gateway information
+        for index, gw_data in enumerate(entry["result"]["uplink_message"]["rx_metadata"], start=1):
+            extracted_entry[f"id_gw_{index}"] = gw_data["gateway_ids"]["gateway_id"]
+            extracted_entry[f"timestamp_gw_{index}"] = gw_data.get("timestamp", None)
+            extracted_entry[f"latitude_gw_{index}"] = gw_data["location"]["latitude"] if "location" in gw_data else None
+            extracted_entry[f"longitude_gw_{index}"] = gw_data["location"]["longitude"] if "location" in gw_data else None
+            extracted_entry[f"altitude_gw_{index}"] = gw_data["location"]["altitude"] if "location" in gw_data else None
+            extracted_entry[f"snr_gw_{index}"] = gw_data.get("snr", None)
+            extracted_entry[f"rssi_gw_{index}"] = gw_data.get("rssi", None)
+
+        extracted_data.append(extracted_entry)
     # Create a DataFrame
     return pd.DataFrame(extracted_data)
