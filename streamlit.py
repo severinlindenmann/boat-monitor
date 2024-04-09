@@ -7,6 +7,8 @@ import os
 from dotenv import load_dotenv
 from google.cloud import bigquery
 import pydeck as pdk
+from streamlit_folium import st_folium
+import folium
 
 load_dotenv()
 
@@ -118,13 +120,28 @@ def utc_to_cest(df):
 
 
 def plot_current_location(df):
-    # find the last entry with valid latitude and longitude
+    # Find the last entry with valid latitude and longitude
     df = df[(df["latitude"] != 0) & (df["longitude"] != 0)]
     df = df.head(1)
+    
     if df.empty:
-        st.warning("Keine gültigen GPS-Koordinaten in der letzten Stunde gefunden.")
+        st.warning("No valid GPS coordinates found in the last hour.")
     else:
-        st.map(df)
+        # Get the latitude and longitude of the location
+        lat = df['latitude'].iloc[0]
+        lon = df['longitude'].iloc[0]
+        
+        # Create a folium map centered around the location
+        m = folium.Map(location=[lat, lon], zoom_start=15)
+        
+        # Add a marker to the map
+        folium.Marker(
+            location=[lat, lon],
+            popup=f"Latitude: {lat}, Longitude: {lon}"
+        ).add_to(m)
+        
+        # Display the map using Streamlit
+        st_folium(m, use_container_width=True)
 
 
 def show_current_measurements(df):
