@@ -131,13 +131,16 @@ def plot_current_location(df):
         lat = df['latitude'].iloc[0]
         lon = df['longitude'].iloc[0]
         
+        # Get the timestamp of the last refresh
+        last_refreshed = df['received_at'].iloc[0].strftime("%Y-%m-%d %H:%M:%S")
+        
         # Create a folium map centered around the location
         m = folium.Map(location=[lat, lon], zoom_start=15)
         
         # Add a marker to the map
         folium.Marker(
             location=[lat, lon],
-            popup=f"Latitude: {lat}, Longitude: {lon}"
+            popup=folium.Popup(f"Latitude: {lat}, Longitude: {lon}<br>Last Refreshed: {last_refreshed}", max_width=300)
         ).add_to(m)
         
         # Display the map using Streamlit
@@ -166,6 +169,8 @@ def run_app():
     st.info(
         f"Die Daten wurden zuletzt aktualisiert: {utc_to_cest_readable(current_data['received_at'].iloc[0])}"
     )
+
+    current_data = utc_to_cest(current_data)
 
     st.subheader("Aktueller Standort")
     plot_current_location(current_data)
