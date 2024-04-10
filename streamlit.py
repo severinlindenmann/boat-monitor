@@ -143,7 +143,7 @@ def fetch_weather_data(past_days):
         ],
         "timezone": "Europe/Berlin",
         "past_days": past_days,
-        "forecast_days": 0,
+        "forecast_days": 1,
     }
 
     # Fetch weather data from the Open-Meteo API
