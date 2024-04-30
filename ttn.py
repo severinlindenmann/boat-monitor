@@ -66,7 +66,7 @@ def get_ttn_data(TTN_KEY, timestamp=get_current_timestamp_minus_one_hour()):
             extracted_entry[f"timestamp_gw_{index}"] = gw_data.get("timestamp", None)
             extracted_entry[f"latitude_gw_{index}"] = gw_data["location"]["latitude"] if "location" in gw_data else None
             extracted_entry[f"longitude_gw_{index}"] = gw_data["location"]["longitude"] if "location" in gw_data else None
-            extracted_entry[f"altitude_gw_{index}"] = gw_data["location"]["altitude"] if "location" in gw_data else None
+            # extracted_entry[f"altitude_gw_{index}"] = gw_data["location"]["altitude"] if "location" in gw_data else None
             extracted_entry[f"snr_gw_{index}"] = gw_data.get("snr", None)
             extracted_entry[f"rssi_gw_{index}"] = gw_data.get("rssi", None)
 
