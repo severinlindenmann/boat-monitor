@@ -174,13 +174,14 @@ def fetch_weather_data(past_days):
     return hourly_dataframe
 
 
-def plot_current_location(df, show_data_transfer=False):
+def plot_current_location(df, show_data_transfer=False, show_last_steps=False):
     # Filter entries with valid device latitude and longitude
     valid_entries = df[(df["latitude"] != 0) & (df["longitude"] != 0)]
     last_entry = valid_entries.head(1)
 
     if last_entry.empty:
         st.warning("No valid GPS coordinates found in the last hour.")
+        return # Exit the function early if there are no valid coordinates
     else:
         # Get the latitude and longitude of the last location
         lat = last_entry["latitude"].iloc[0]
@@ -233,7 +234,7 @@ def plot_current_location(df, show_data_transfer=False):
                 distance_m = geodesic((lat, lon), (lat_gw, lon_gw)).meters
 
                 # Draw line between device location and gateway
-                line = folium.PolyLine(
+                folium.PolyLine(
                     locations=[(lat, lon), (lat_gw, lon_gw)],
                     color="red",
                     weight=line_width,
@@ -252,8 +253,65 @@ def plot_current_location(df, show_data_transfer=False):
                     )
                 ).add_to(m)
 
-        # Display the map using Streamlit
-        st_folium(m, use_container_width=True, height=400)
+    if show_last_steps:
+        # plot all the last steps but make sure that there is at least a gap of 50 meters between each step
+        valid_entries.sort_values('received_at', inplace=True)
+
+        # Function to calculate distance and filter rows
+        def filter_entries(df):
+            filtered_entries = []
+            last_valid_index = 1  
+
+            for current_index in range(1, len(df)):
+                # Calculate distance between the current entry and the last valid entry
+                current_point = (df.iloc[current_index]['latitude'], df.iloc[current_index]['longitude'])
+                last_valid_point = (df.iloc[last_valid_index]['latitude'], df.iloc[last_valid_index]['longitude'])
+                distance = geodesic(last_valid_point, current_point).meters
+
+                # If distance is 50 meters or more, add to the filtered list
+                if distance >= 50:
+                    filtered_entries.append(df.iloc[current_index])
+                    last_valid_index = current_index  # Update the last valid index
+
+            return pd.DataFrame(filtered_entries)
+
+        # Apply the filtering function
+        filtered_valid_entries = filter_entries(valid_entries).reset_index(drop=True)
+
+        # filter out the first entry
+        filtered_valid_entries = filtered_valid_entries.iloc[1:]
+
+       # Add markers for each entry
+        for index, row in filtered_valid_entries.iterrows():
+            lat = row['latitude']
+            lon = row['longitude']
+            last_refreshed = row['received_at'].strftime("%Y-%m-%d %H:%M:%S")
+
+            # Create a popup for the marker
+            popup_text = f"Latitude: {lat}, Longitude: {lon}<br>Last Refreshed: {last_refreshed}"
+            
+            # Add a CircleMarker (not Marker) directly to the map
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=5,  # Radius size
+                color='blue',  # Border color
+                fill=True,
+                fill_color='blue',  # Fill color
+                fill_opacity=0.6,
+                popup=folium.Popup(popup_text, max_width=300)
+            ).add_to(m)
+
+            # Connect this point with the previous one if it exists
+            if index > 0:
+                last_lat = filtered_valid_entries.iloc[index - 1]['latitude']
+                last_lon = filtered_valid_entries.iloc[index - 1]['longitude']
+                folium.PolyLine(locations=[[last_lat, last_lon], [lat, lon]], color='blue').add_to(m)
+
+
+
+
+    # Display the map using Streamlit
+    st_folium(m, use_container_width=True, height=400)
 
 
 def plot_history_location(df):
@@ -291,13 +349,47 @@ def plot_history_location(df):
         # Display the map using Streamlit
     st_folium(m, use_container_width=True, height=400, returned_objects=[])
 
+def calculateCurrentSpeed(df):
+    if df.shape[0] < 2:
+        return 0
+
+    # Get the last two valid entries
+    valid_entries = df[(df["latitude"] != 0) & (df["longitude"] != 0)]
+    if len(valid_entries) < 2:
+        return 0  # Ensure there are at least two valid entries to calculate speed
+
+    # Properly accessing the last and second last entries
+    last_entry = valid_entries.iloc[-1]  # Last entry
+    second_last_entry = valid_entries.iloc[-2]  # Second last entry
+
+    # Calculate the distance between the two entries
+    last_point = (last_entry["latitude"], last_entry["longitude"])
+    second_last_point = (second_last_entry["latitude"], second_last_entry["longitude"])
+    distance = geodesic(last_point, second_last_point).meters
+
+    # Calculate the time difference between the two entries
+    last_time = pd.to_datetime(last_entry["received_at"])
+    second_last_time = pd.to_datetime(second_last_entry["received_at"])
+    time_diff = (last_time - second_last_time).total_seconds()
+
+    if time_diff == 0:
+        return 0  # Avoid division by zero if the times are the same
+
+    # Calculate the speed in meters per second
+    speed_mps = distance / time_diff
+
+    # Convert speed from m/s to knots (1 m/s = 1.94384 knots)
+    speed_knots = (speed_mps * 1.94384) * -1
+
+    return round(speed_knots, 2)
+
 
 def show_current_measurements(df):
     st.subheader("Aktuelle Messwerte")
     st.info(
         "Die Messwerte könnten sehr ungenau oder falsch sein - muss noch genauer geprüft werden."
     )
-    col1, col2 = st.columns((1, 1))
+    col1, col2,col3 = st.columns((1, 1,1))
 
     with col1:
         st.metric("Feuchtigkeit", f"{df['humidity'].iloc[0]} %", delta=None)
@@ -305,8 +397,9 @@ def show_current_measurements(df):
     with col2:
         st.metric("Temperatur", f"{df['temperature'].iloc[0]} °C", delta=None)
 
-    # with col3:
-    #         st.metric("Battery Voltage", f"{df['batteryVoltage'].iloc[0]} V", delta=None)
+    current_speed = calculateCurrentSpeed(df)
+    with col3:
+            st.metric("Geschwindigkeit", f"{current_speed} kn", delta=None)
 
 
 def transform_history(bigquery_df, weather_df):
@@ -450,6 +543,7 @@ def run_app():
 
     st.subheader("Aktueller Standort des Bootes")
     show_data_transfer = st.checkbox("Datenübertragung anzeigen", value=True)
+    show_last_steps = st.checkbox("Letzte Schritte anzeigen", value=True)
     if show_data_transfer:
         st.markdown("""
         **Legende der Karte:**
@@ -458,7 +552,7 @@ def run_app():
         - **Rote Linien:** Verbindungslinien zwischen Boot und Gateways
         - **Linienstärke:** Signal-to-Noise Ratio (SNR) des Gateways
         """)
-    plot_current_location(current_data, show_data_transfer)
+    plot_current_location(current_data, show_data_transfer,show_last_steps)
     show_current_measurements(current_data)
 
     st.title("Historische Daten")
